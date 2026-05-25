@@ -78,6 +78,7 @@ class MainWindow(QMainWindow):
         self.start_btn = QPushButton("START BOT")
         self.start_btn.setObjectName("startBtn")
         self.start_btn.clicked.connect(self.start_bot)
+        self.settings_tab.calibrate_btn.clicked.connect(self.bot.calibrate_cooldown)
 
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.setObjectName("stopBtn")
@@ -119,7 +120,13 @@ class MainWindow(QMainWindow):
         if "earnings" in stats:
             self.stats_tab.earnings_label.setText(f"{stats['earnings']} coins")
         if "session_time" in stats:
-            self.stats_tab.session_time_label.setText(str(stats["session_time"]))
+            secs = stats["session_time"]
+            m, s = divmod(int(secs), 60)
+            h, m = divmod(m, 60)
+            if h:
+                self.stats_tab.session_time_label.setText(f"{h}h {m}m {s}s")
+            else:
+                self.stats_tab.session_time_label.setText(f"{m}m {s}s")
 
     def start_bot(self):
         self.append_log("[*] Syncing configuration and starting bot...")
@@ -136,8 +143,6 @@ class MainWindow(QMainWindow):
         self.bot_thread = Thread(target=self.bot.run_loop, daemon=True)
         self.bot_thread.start()
 
-        Thread(target=self.kill_switch_listener, daemon=True).start()
-
     def stop_bot(self):
         self.append_log("[*] Stopping bot...")
         self.bot.running = False
@@ -147,16 +152,6 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.append_log("[*] Bot stopped.")
-
-    def kill_switch_listener(self):
-        import time, keyboard
-        key = self.config.get("emergency_key", "esc")
-        while self.bot.running:
-            if keyboard.is_pressed(key) or keyboard.is_pressed('q'):
-                self.append_log("[!] Killswitch triggered!")
-                self.bot.running = False
-                break
-            time.sleep(0.1)
 
     def closeEvent(self, event):
         self.bot.running = False
