@@ -67,7 +67,9 @@ class BotEngine:
         self._slots_cooldown = 20.0
 
         self._iteration_count = 0
-        self._activity_index = 0  # round-robin for multi-activity
+        self._activity_index = 0
+        self._last_summary_time = time.time()
+        self._summary_interval = 3600
         self._killswitch = Killswitch(on_trigger=self._killswitch_triggered)
 
     def log(self, message):
@@ -109,10 +111,6 @@ class BotEngine:
 
     def capture_screen(self):
         return PlatformManager.capture_scaled_screen()
-
-    def emit_stats(self):
-        self.stats["session_time"] = int(time.time() - self.stats["session_start"])
-        self.signals.stats_signal.emit(dict(self.stats))
 
     def _killswitch_triggered(self):
         self.log("[!] Killswitch activated — stopping bot.")
@@ -171,6 +169,7 @@ class BotEngine:
                 self._check_break()
                 if not self.running:
                     break
+                self._check_summary()
 
                 if self.state == STATE_INIT:
                     self._state_init()
@@ -209,6 +208,16 @@ class BotEngine:
         interval = self._break_interval
         if time.time() - self.last_break_time > interval:
             self.state = STATE_BREAK
+
+    def _check_summary(self):
+        if time.time() - self._last_summary_time > self._summary_interval:
+            self._last_summary_time = time.time()
+            self.emit_stats(periodic=True)
+
+    def emit_stats(self, periodic=False):
+        self.stats["session_time"] = int(time.time() - self.stats["session_start"])
+        self.stats["periodic_summary"] = periodic
+        self.signals.stats_signal.emit(dict(self.stats))
 
     def _state_init(self):
         """Pick the next enabled activity and send its command."""

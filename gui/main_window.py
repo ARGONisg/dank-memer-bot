@@ -1,3 +1,4 @@
+import time
 from PySide6.QtCore import Qt, QObject, Signal, Slot
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
@@ -12,6 +13,7 @@ from gui.stats_tab import StatsTab
 from gui.webhook_tab import WebhookTab
 from bot.config import ConfigManager
 from bot.engine import BotEngine
+from bot.webhook import test_webhook, build_session_embed, send_webhook
 
 class BotLogSignals(QObject):
     log_signal = Signal(str)
@@ -79,6 +81,7 @@ class MainWindow(QMainWindow):
         self.start_btn.setObjectName("startBtn")
         self.start_btn.clicked.connect(self.start_bot)
         self.settings_tab.calibrate_btn.clicked.connect(self.bot.calibrate_cooldown)
+        self.webhook_tab.test_btn.clicked.connect(self.test_webhook)
 
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.setObjectName("stopBtn")
@@ -107,6 +110,10 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def update_stats(self, stats):
+        if stats.get("periodic_summary"):
+            self._send_periodic_summary(stats)
+            return
+
         if "casts" in stats:
             self.stats_tab.casts_label.setText(str(stats["casts"]))
         if "catches" in stats:
@@ -127,6 +134,18 @@ class MainWindow(QMainWindow):
                 self.stats_tab.session_time_label.setText(f"{h}h {m}m {s}s")
             else:
                 self.stats_tab.session_time_label.setText(f"{m}m {s}s")
+
+    def test_webhook(self):
+        url = self.webhook_tab.url_input.text().strip()
+        if not url:
+            self.append_log("[!] No webhook URL configured.")
+            return
+        self.append_log("[*] Testing webhook...")
+        result = test_webhook(url)
+        if result["ok"]:
+            self.append_log("[+] Webhook test successful.")
+        else:
+            self.append_log(f"[!] Webhook test failed: {result['error']}")
 
     def start_bot(self):
         self.append_log("[*] Syncing configuration and starting bot...")
@@ -152,6 +171,35 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.append_log("[*] Bot stopped.")
+        self._send_session_summary()
+
+    def _send_session_summary(self):
+        url = self.webhook_tab.url_input.text().strip()
+        enabled = self.webhook_tab.enable_check.isChecked()
+        summary_events = self.webhook_tab.on_summary_check.isChecked()
+        if not url or not enabled or not summary_events:
+            self.append_log("[*] Webhook summary disabled — skip.")
+            return
+        duration = int(time.time() - self.bot.stats.get("session_start", time.time()))
+        embed = build_session_embed(self.bot.stats, duration)
+        result = send_webhook(url, embed=embed)
+        if result["ok"]:
+            self.append_log("[+] Session summary sent via webhook.")
+        else:
+            self.append_log(f"[!] Failed to send session summary: {result['error']}")
+
+    def _send_periodic_summary(self, stats):
+        url = self.webhook_tab.url_input.text().strip()
+        enabled = self.webhook_tab.enable_check.isChecked()
+        if not url or not enabled:
+            return
+        duration = int(time.time() - self.bot.stats.get("session_start", time.time()))
+        embed = build_session_embed(stats, duration)
+        result = send_webhook(url, embed=embed)
+        if result["ok"]:
+            self.append_log("[+] Hourly summary sent via webhook.")
+        else:
+            self.append_log(f"[!] Hourly summary failed: {result['error']}")
 
     def closeEvent(self, event):
         self.bot.running = False
