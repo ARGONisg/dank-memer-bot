@@ -1,0 +1,4 @@
+-r base.txt
+pyobjc-core
+pyobjc-framework-Quartz
+pyobjc-framework-Cocoa
