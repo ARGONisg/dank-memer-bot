@@ -2,6 +2,7 @@ import time
 import random
 import re
 import logging
+from bot.platform import PlatformManager
 from bot.vision import VisionEngine
 
 logger = logging.getLogger("DankBot.Blackjack")
@@ -246,7 +247,6 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
     for hit_num in range(max_hits):
         if hit_num > 0:
             time.sleep(random.uniform(1.0, 2.0))
-            from bot.platform import PlatformManager
             screen_bgr = PlatformManager.capture_scaled_screen()
 
         info = extract_hand_info_from_screen(screen_bgr)

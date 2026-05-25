@@ -1,6 +1,7 @@
 import time
 import random
 import logging
+from bot.platform import PlatformManager
 from bot.vision import VisionEngine
 
 logger = logging.getLogger("DankBot.Fishing")
@@ -65,7 +66,6 @@ def execute_fishing_cycle(screen_bgr, config, log_func) -> dict:
         VisionEngine.click_button(go_fishing)
         time.sleep(random.uniform(2.0, 3.0))
         # Re-capture after clicking
-        from bot.platform import PlatformManager
         screen_bgr = PlatformManager.capture_scaled_screen()
 
     # ── Step 3: Solve minigame ──
@@ -101,7 +101,6 @@ def execute_fishing_cycle(screen_bgr, config, log_func) -> dict:
     time.sleep(random.uniform(2.0, 3.5))
 
     # ── Step 5: Read catch result ──
-    from bot.platform import PlatformManager
     screen_bgr = PlatformManager.capture_scaled_screen()
     fish_name, rarity = VisionEngine.read_catch_result(screen_bgr)
 
@@ -158,7 +157,6 @@ def _click_sell_button(screen_bgr, log_func, currency: str) -> bool:
         time.sleep(random.uniform(0.8, 1.5))
 
         # Handle sell confirmation dialog if present
-        from bot.platform import PlatformManager
         screen_bgr = PlatformManager.capture_scaled_screen()
         confirm = VisionEngine.find_buttons_by_text(screen_bgr, "Confirm", color_name='green')
         if confirm:
