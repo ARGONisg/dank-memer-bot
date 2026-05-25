@@ -8,7 +8,7 @@ import pyautogui
 from bot.platform import PlatformManager
 from bot.vision import VisionEngine
 from bot.killswitch import Killswitch
-from bot.antidetection import human_type, jitter_sleep, get_break_duration, get_break_interval
+from bot.antidetection import human_type
 from bot.minigames import fishing as fishing_mg
 from bot.minigames import blackjack as bj_mg
 from bot.minigames import slots as slots_mg
@@ -64,7 +64,7 @@ class BotEngine:
         self._bj_enabled = False
         self._bj_cooldown = 45.0
         self._slots_enabled = False
-        self._slots_cmd = "slots 100"
+        self._slots_cooldown = 20.0
 
         self._iteration_count = 0
         self._activity_index = 0  # round-robin for multi-activity
@@ -98,6 +98,7 @@ class BotEngine:
         self._bj_cooldown = s.get("bj_cooldown", 45.0)
         self._slots_enabled = s.get("slots_enabled", False)
         self._slots_cmd = s.get("slots_command", "slots 100")
+        self._slots_cooldown = s.get("slots_cooldown", 20.0)
 
     def send_command(self, cmd_text):
         if not self.running:
@@ -110,6 +111,7 @@ class BotEngine:
         return PlatformManager.capture_scaled_screen()
 
     def emit_stats(self):
+        self.stats["session_time"] = int(time.time() - self.stats["session_start"])
         self.signals.stats_signal.emit(dict(self.stats))
 
     def _killswitch_triggered(self):
@@ -204,7 +206,7 @@ class BotEngine:
         self.signals.stopped_signal.emit()
 
     def _check_break(self):
-        interval = get_break_interval(self._break_profile)
+        interval = self._break_interval
         if time.time() - self.last_break_time > interval:
             self.state = STATE_BREAK
 
@@ -224,8 +226,9 @@ class BotEngine:
             activities.append(('slots', self._slots_cmd))
 
         if not activities:
-            self.log("[!] No activities enabled. Sleeping...")
+            self.log("[!] No activities enabled. Sleeping 30s...")
             time.sleep(30)
+            self.state = STATE_COOLDOWN
             return
 
         # Round-robin selection
@@ -377,7 +380,6 @@ class BotEngine:
         else:
             self.log("[!] Blackjack hand had an issue.")
 
-        # Wait cooldown then cycle to next activity
         bj_wait = self._bj_cooldown + random.uniform(1.0, 3.0)
         self.log(f"Blackjack cooldown: {bj_wait:.1f}s...")
         for _ in range(int(bj_wait * 10)):
@@ -408,8 +410,7 @@ class BotEngine:
         else:
             self.log("[!] Slots spin had an issue.")
 
-        # Slots cooldown (typically shorter than fishing)
-        slots_wait = random.uniform(15.0, 25.0)
+        slots_wait = self._slots_cooldown + random.uniform(1.0, 3.0)
         self.log(f"Slots cooldown: {slots_wait:.1f}s...")
         for _ in range(int(slots_wait * 10)):
             if not self.running:
@@ -436,10 +437,9 @@ class BotEngine:
         self.state = STATE_INIT
 
     def _state_break(self):
-        """Take a human-like break using break profile."""
-        profile = self._break_profile
-        duration = get_break_duration(profile)
-        self.log(f"[!] Human break [{profile}] for {duration // 60}m {duration % 60}s...")
+        """Take a human-like break."""
+        duration = random.randint(self._break_min, self._break_max)
+        self.log(f"[!] Human break for {duration // 60}m {duration % 60}s...")
         for _ in range(duration):
             if not self.running:
                 return
