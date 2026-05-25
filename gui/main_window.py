@@ -26,7 +26,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Dank Memer Automation Framework")
-        self.resize(820, 620)
+        self.resize(920, 720)
+        self.setMinimumSize(800, 600)
         self.setStyleSheet(QSS)
 
         self.config = ConfigManager("default")
@@ -45,13 +46,14 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setSpacing(6)
+        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(8, 6, 8, 6)
 
         # Title
         title = QLabel("Dank Memer Automation Dashboard")
-        title.setFont(QFont("Arial", 16, QFont.Bold))
+        title.setFont(QFont("Arial", 15, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("color: #b4befe; margin-bottom: 6px;")
+        title.setStyleSheet("color: #f2f3f5; padding: 2px 0;")
         main_layout.addWidget(title)
 
         # Tabs
@@ -65,18 +67,21 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.scheduler_tab, "Scheduler")
         self.tabs.addTab(self.stats_tab, "Statistics")
         self.tabs.addTab(self.webhook_tab, "Webhook")
-        main_layout.addWidget(self.tabs)
+        main_layout.addWidget(self.tabs, stretch=3)
 
         # Log area
         log_group = QGroupBox("Activity Logs")
         log_layout = VBox(log_group)
+        log_layout.setContentsMargins(4, 4, 4, 4)
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(100)
         log_layout.addWidget(self.log_text)
-        main_layout.addWidget(log_group)
+        main_layout.addWidget(log_group, stretch=2)
 
         # Start / Stop buttons
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
         self.start_btn = QPushButton("START BOT")
         self.start_btn.setObjectName("startBtn")
         self.start_btn.clicked.connect(self.start_bot)
@@ -93,7 +98,7 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(btn_layout)
 
         footer = QLabel("Killswitch: Press ESC or q globally to abort.")
-        footer.setStyleSheet("color: #f38ba8; font-size: 11px;")
+        footer.setStyleSheet("color: #ed4245; font-size: 11px; font-weight: 500;")
         footer.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(footer)
 

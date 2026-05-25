@@ -88,6 +88,7 @@ class SettingsTab(QWidget):
         self.max_delay_spin.setSingleStep(0.1)
 
         self.calibrate_btn = QPushButton("Calibrate Cooldown")
+        self.calibrate_btn.setStyleSheet("QPushButton { background-color: #5865F2; color: #ffffff; font-weight: 600; } QPushButton:hover { background-color: #4752C4; }")
 
         timing_form.addRow("Fish Cooldown:", self.cooldown_spin)
         timing_form.addRow("", self.calibrate_btn)
