@@ -3,22 +3,12 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QFormLayout, QLineEdit,
     QComboBox, QDoubleSpinBox, QPushButton, QLabel, QScrollArea, QFrame, QCheckBox
 )
+from gui.draggable import DraggableGroupBox, DraggableCanvas
 
 RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Exotic", "Mythical"]
 SELL_CURRENCIES = ["Coins", "Fish Points"]
 BAIT_ITEMS = ["None", "Bread", "Worms", "Soggy Salad", "Magical Bait", "Minnow", "Shrimp", "Squid"]
 EQUIP_ITEMS = ["None", "Fishing Rod", "Fibreglass Rod", "Golden Rod", "Diamond Rod", "Lava Rod", "Galactic Rod"]
-
-GROUP_STYLE = "QGroupBox { max-width: 500px; }"
-
-def _make_form(group):
-    f = QFormLayout(group)
-    f.setLabelAlignment(Qt.AlignLeft)
-    f.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-    f.setContentsMargins(12, 16, 12, 12)
-    f.setHorizontalSpacing(16)
-    f.setVerticalSpacing(8)
-    return f
 
 class SettingsTab(QWidget):
     def __init__(self, config):
@@ -27,22 +17,32 @@ class SettingsTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        # Main layout for the widget
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Create a scroll area
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
-        container = QWidget()
+        # Container widget for scroll contents (using DraggableCanvas for thinking board support)
+        container = DraggableCanvas()
         container.setObjectName("settingsContainer")
         container.setStyleSheet("#settingsContainer { background-color: #313338; }")
-        layout = QVBoxLayout(container)
-        layout.setSpacing(8)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setAlignment(Qt.AlignTop)
 
         # ── Command Settings ──
-        cmd_group = QGroupBox("Command Settings")
-        cmd_form = _make_form(cmd_group)
+        cmd_group = DraggableGroupBox("Command Settings", container)
+        cmd_form = QFormLayout(cmd_group)
+        cmd_form.setLabelAlignment(Qt.AlignLeft)
+        cmd_form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        cmd_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        cmd_form.setContentsMargins(15, 15, 15, 15)
+        cmd_form.setHorizontalSpacing(20)
+        cmd_form.setVerticalSpacing(10)
+
         self.prefix_input = QLineEdit(self.config.get("command_prefix", "pls "))
         self.username_input = QLineEdit(self.config.get("discord_username", "Xenron"))
         self.fish_command_input = QLineEdit(self.config.get("fish_command", "fish catch"))
@@ -53,11 +53,17 @@ class SettingsTab(QWidget):
         cmd_form.addRow("Fish Command:", self.fish_command_input)
         cmd_form.addRow("Blackjack Command:", self.bj_command_input)
         cmd_form.addRow("Slots Command:", self.slots_command_input)
-        layout.addWidget(cmd_group)
 
         # ── Gear Configuration ──
-        gear_group = QGroupBox("Gear Configuration")
-        gear_form = _make_form(gear_group)
+        gear_group = DraggableGroupBox("Gear Configuration", container)
+        gear_form = QFormLayout(gear_group)
+        gear_form.setLabelAlignment(Qt.AlignLeft)
+        gear_form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        gear_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        gear_form.setContentsMargins(15, 15, 15, 15)
+        gear_form.setHorizontalSpacing(20)
+        gear_form.setVerticalSpacing(10)
+
         self.bait_combo = QComboBox()
         self.bait_combo.addItems(BAIT_ITEMS)
         bait_idx = self.bait_combo.findText(self.config.get("fish_bait", "None"))
@@ -68,11 +74,17 @@ class SettingsTab(QWidget):
         if equip_idx >= 0: self.equip_combo.setCurrentIndex(equip_idx)
         gear_form.addRow("Bait:", self.bait_combo)
         gear_form.addRow("Equipment:", self.equip_combo)
-        layout.addWidget(gear_group)
 
         # ── Rarity & Sell ──
-        sell_group = QGroupBox("Sell / Keep Strategy")
-        sell_form = _make_form(sell_group)
+        sell_group = DraggableGroupBox("Sell / Keep Strategy", container)
+        sell_form = QFormLayout(sell_group)
+        sell_form.setLabelAlignment(Qt.AlignLeft)
+        sell_form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        sell_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        sell_form.setContentsMargins(15, 15, 15, 15)
+        sell_form.setHorizontalSpacing(20)
+        sell_form.setVerticalSpacing(10)
+
         self.rarity_combo = QComboBox()
         self.rarity_combo.addItems(RARITIES)
         rarity_idx = self.rarity_combo.findText(self.config.get("min_rarity_to_keep", "Rare"))
@@ -83,11 +95,17 @@ class SettingsTab(QWidget):
         if curr_idx >= 0: self.sell_currency_combo.setCurrentIndex(curr_idx)
         sell_form.addRow("Min Rarity to Keep:", self.rarity_combo)
         sell_form.addRow("Sell For:", self.sell_currency_combo)
-        layout.addWidget(sell_group)
 
         # ── Timing & Calibration ──
-        timing_group = QGroupBox("Timing & Calibration")
-        timing_form = _make_form(timing_group)
+        timing_group = DraggableGroupBox("Timing & Calibration", container)
+        timing_form = QFormLayout(timing_group)
+        timing_form.setLabelAlignment(Qt.AlignLeft)
+        timing_form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        timing_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        timing_form.setContentsMargins(15, 15, 15, 15)
+        timing_form.setHorizontalSpacing(20)
+        timing_form.setVerticalSpacing(10)
+
         self.cooldown_spin = QDoubleSpinBox()
         self.cooldown_spin.setRange(5.0, 300.0)
         self.cooldown_spin.setValue(self.config.get("fish_cooldown", 35.0))
@@ -106,22 +124,24 @@ class SettingsTab(QWidget):
         timing_form.addRow("", self.calibrate_btn)
         timing_form.addRow("Min Typing Delay:", self.min_delay_spin)
         timing_form.addRow("Max Typing Delay:", self.max_delay_spin)
-        layout.addWidget(timing_group)
 
-        # ── Emergency Key ──
-        safety_group = QGroupBox("Safety")
-        safety_form = _make_form(safety_group)
+        # ── Safety ──
+        safety_group = DraggableGroupBox("Safety", container)
+        safety_form = QFormLayout(safety_group)
+        safety_form.setLabelAlignment(Qt.AlignLeft)
+        safety_form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        safety_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        safety_form.setContentsMargins(15, 15, 15, 15)
+        safety_form.setHorizontalSpacing(20)
+        safety_form.setVerticalSpacing(10)
+
         self.emergency_key_input = QLineEdit(self.config.get("emergency_key", "esc"))
         safety_form.addRow("Killswitch Key:", self.emergency_key_input)
         self.skip_embed_check_cb = QCheckBox("Skip embed ownership verification")
         self.skip_embed_check_cb.setChecked(self.config.get("skip_embed_check", False))
         safety_form.addRow("", self.skip_embed_check_cb)
-        layout.addWidget(safety_group)
 
         scroll.setWidget(container)
-
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.addWidget(scroll)
 
     def sync_to_config(self, config):
