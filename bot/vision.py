@@ -235,31 +235,37 @@ class VisionEngine:
         """
         Scan screen for the thin text line above a Discord embed
         (e.g. 'Xenron pls fish catch' or 'Xenron used :: fish catch').
+        Uses fast contour detection instead of an expensive double loop.
         Returns the OCR'd string or empty string.
         """
         sh, sw = screen_bgr.shape[:2]
-        # Scan the center band (20%-85% height) for coloured embed-border strips
+        # Scan the center band (15%-88% height) for coloured embed-border strips
         scan_top, scan_bot = int(sh * 0.15), int(sh * 0.88)
 
-        for lower, upper in [
+        border_colors = [
             (np.array([50, 130, 15]), np.array([110, 195, 55])),   # green border
             (np.array([200, 75, 60]), np.array([255, 135, 110])),  # blurple border
             (np.array([55, 45, 200]), np.array([95, 80, 245])),    # red border
             (np.array([65, 60, 60]), np.array([125, 120, 120])),   # grey border
-        ]:
+        ]
+
+        for lower, upper in border_colors:
             mask = cv2.inRange(screen_bgr, lower, upper)
-            # Slide a narrow strip detector
-            for y in range(scan_top, scan_bot - 25, 8):
-                for x in range(sw // 5, 4 * sw // 5, 12):
-                    strip = mask[y:y + 25, x:x + 5]
-                    if float(np.mean(strip)) > 210:
-                        # Text sits directly above this coloured strip
-                        text_y1 = max(0, y - 40)
-                        text_y2 = max(0, y - 5)
-                        text_rect = (max(0, x - 120), text_y1, 350, text_y2 - text_y1)
-                        text = VisionEngine.ocr_region(screen_bgr, text_rect)
-                        if text:
-                            return text
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                bx, by, bw, bh = cv2.boundingRect(cnt)
+                
+                # Check for a thin vertical line in the central horizontal band of the screen
+                if (1 <= bw <= 15 and bh >= 20 and
+                        by >= scan_top and by <= scan_bot and
+                        bx >= sw // 5 and bx <= 4 * sw // 5):
+                    # Text sits directly above this coloured strip
+                    text_y1 = max(0, by - 40)
+                    text_y2 = max(0, by - 5)
+                    text_rect = (max(0, bx - 120), text_y1, 350, text_y2 - text_y1)
+                    text = VisionEngine.ocr_region(screen_bgr, text_rect)
+                    if text:
+                        return text
         return ""
 
     @staticmethod

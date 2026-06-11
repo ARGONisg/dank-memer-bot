@@ -2,20 +2,56 @@ import time
 import random
 import re
 import logging
+from functools import lru_cache
 from bot.platform import PlatformManager
 from bot.vision import VisionEngine
 
 logger = logging.getLogger("DankBot.Blackjack")
 
-# ── Card value mapping for OCR ──────────────────────────────────────
+FACE_MAP = {'j': 10, 'q': 10, 'k': 10, 'a': 11,
+            'jack': 10, 'queen': 10, 'king': 10, 'ace': 11}
 
-FACE_MAP = {
-    'j': 10, 'q': 10, 'k': 10, 'a': 11,
-    'jack': 10, 'queen': 10, 'king': 10, 'ace': 11,
-}
+CARD_VALUES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+PER_DECK = {2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4}
+
+
+class Shoe:
+    def __init__(self, num_decks=5):
+        self.num_decks = num_decks
+        self.reset()
+
+    def reset(self, num_decks=None):
+        if num_decks is not None:
+            self.num_decks = num_decks
+        self.counts = {v: PER_DECK[v] * self.num_decks for v in CARD_VALUES}
+
+    def remove(self, card_value):
+        c = self.counts.get(card_value)
+        if c and c > 0:
+            self.counts[card_value] = c - 1
+
+    def total(self):
+        return sum(self.counts.values())
+
+    def copy(self):
+        s = Shoe(self.num_decks)
+        s.counts = dict(self.counts)
+        return s
+
+    def as_tuple(self):
+        return tuple(self.counts[v] for v in CARD_VALUES)
+
+
+_shoe = Shoe()
+
+def reset_shoe(num_decks=5):
+    _shoe.reset(num_decks)
+
+def get_shoe():
+    return _shoe
+
 
 def card_value(text: str) -> int:
-    """Parse a card string into its blackjack numerical value."""
     text = text.strip().lower()
     if text in FACE_MAP:
         return FACE_MAP[text]
@@ -24,181 +60,236 @@ def card_value(text: str) -> int:
     except ValueError:
         return 0
 
-# ── Basic Strategy Lookup (S17, 5 decks, no peek) ──────────────────
-# Row = player total index (hard: 5-21 mapped to 0-16, soft: A2-A9 mapped to 17-24)
-# Col = dealer upcard (2-11, where 11 = Ace)
-# Values: H=Hit, S=Stand, D=Double, P=Split, U=Surrender (for Surrender)
-# X = not applicable / play as hard total
+def parse_player_cards(ocr_text: str):
+    text = ocr_text.lower()
+    m = re.search(r'(?:you|your)\s*:\s*([\d\sajqk]+?)\s*(?:\(|$)', text)
+    if m:
+        raw = m.group(1)
+        tokens = re.findall(r'(10|[2-9]|[ajqk])', raw)
+        if len(tokens) >= 2:
+            return [card_value(t) for t in tokens]
+    return None
 
-# Hard totals strategy (5-21 → rows 0-16)
-HARD_STRATEGY = {
-    # total: [2, 3, 4, 5, 6, 7, 8, 9, 10, A]
-    5:  ['H','H','H','H','H','H','H','H','H','H'],
-    6:  ['H','H','H','H','H','H','H','H','H','H'],
-    7:  ['H','H','H','H','H','H','H','H','H','H'],
-    8:  ['H','H','H','H','H','H','H','H','H','H'],
-    9:  ['H','D','D','D','D','H','H','H','H','H'],
-    10: ['D','D','D','D','D','D','D','D','H','H'],
-    11: ['D','D','D','D','D','D','D','D','D','H'],
-    12: ['H','H','S','S','S','H','H','H','H','H'],
-    13: ['S','S','S','S','S','H','H','H','H','H'],
-    14: ['S','S','S','S','S','H','H','H','H','H'],
-    15: ['S','S','S','S','S','H','H','H','U','H'],
-    16: ['S','S','S','S','S','H','H','U','U','U'],
-    17: ['S','S','S','S','S','S','S','S','S','S'],
-    18: ['S','S','S','S','S','S','S','S','S','S'],
-    19: ['S','S','S','S','S','S','S','S','S','S'],
-    20: ['S','S','S','S','S','S','S','S','S','S'],
-    21: ['S','S','S','S','S','S','S','S','S','S'],
-}
+def parse_dealer_upcard(ocr_text: str):
+    text = ocr_text.lower()
+    m = re.search(r'(?:dealer|their)\s*:\s*(\w+)', text)
+    if m:
+        return card_value(m.group(1))
+    return None
 
-# Soft totals strategy (A2-A9 = rows, dealer 2-A = cols)
-SOFT_STRATEGY = {
-    # soft_total: [2, 3, 4, 5, 6, 7, 8, 9, 10, A]
-    'A2': ['H','H','D','D','D','H','H','H','H','H'],
-    'A3': ['H','H','D','D','D','H','H','H','H','H'],
-    'A4': ['H','H','D','D','D','H','H','H','H','H'],
-    'A5': ['H','H','D','D','D','H','H','H','H','H'],
-    'A6': ['H','D','D','D','D','H','H','H','H','H'],
-    'A7': ['S','D','D','D','D','S','S','H','H','H'],
-    'A8': ['S','S','S','S','D','S','S','S','S','S'],
-    'A9': ['S','S','S','S','S','S','S','S','S','S'],
-}
-
-# Pair splitting strategy
-PAIR_STRATEGY = {
-    # pair_value: [2, 3, 4, 5, 6, 7, 8, 9, 10, A]
-    '2-2': ['P','P','P','P','P','P','H','H','H','H'],
-    '3-3': ['P','P','P','P','P','P','H','H','H','H'],
-    '4-4': ['H','H','H','P','P','H','H','H','H','H'],
-    '5-5': ['D','D','D','D','D','D','D','D','H','H'],  # never split 5s
-    '6-6': ['P','P','P','P','P','H','H','H','H','H'],
-    '7-7': ['P','P','P','P','P','P','H','H','H','H'],
-    '8-8': ['P','P','P','P','P','P','P','P','P','P'],
-    '9-9': ['P','P','P','P','P','S','P','P','S','S'],
-    '10-10': ['S','S','S','S','S','S','S','S','S','S'],
-    'A-A': ['P','P','P','P','P','P','P','P','P','P'],
-}
+def parse_dealer_final_cards(ocr_text: str):
+    text = ocr_text.lower()
+    m = re.search(r'(?:dealer|their)\s*:\s*([\d\sajqk]+?)\s*(?:\(|$)', text)
+    if m:
+        raw = m.group(1)
+        tokens = re.findall(r'(10|[2-9]|[ajqk])', raw)
+        if len(tokens) >= 2:
+            return [card_value(t) for t in tokens]
+        if len(tokens) == 1:
+            return [card_value(t) for t in tokens]
+    return None
 
 
-def decision(player_total: int, dealer_up: int, is_soft: bool = False, pair_value: int = 0) -> str:
-    """
-    Returns the basic strategy decision for the given hand.
-    player_total: the runner's hand total (e.g. 18)
-    dealer_up: the dealer's visible card (2-11, where 11=Ace)
-    is_soft: True if the hand contains an Ace counted as 11
-    pair_value: the value of one card if it's a pair (e.g. 8 for 8-8, 11 for A-A). 0 = not a pair.
-    Returns: 'H' (Hit), 'S' (Stand), 'D' (Double), 'P' (Split), 'U' (Surrender).
-    """
-    dealer_col = min(dealer_up, 11) - 2  # 2→0, 3→1, ..., 10→8, A→9
-    if dealer_col < 0 or dealer_col > 9:
-        return 'H'
+@lru_cache(maxsize=8192)
+def dealer_outcomes(up_value, shoe_tuple):
+    shoe = dict(zip(CARD_VALUES, shoe_tuple))
+    total = sum(shoe.values())
+    if total == 0:
+        return {}
 
-    # Pair strategy (checked first as it takes priority)
-    if pair_value >= 2:
-        pair_lookup = {
-            2: '2-2', 3: '3-3', 4: '4-4', 5: '5-5', 6: '6-6',
-            7: '7-7', 8: '8-8', 9: '9-9', 10: '10-10', 11: 'A-A',
-        }
-        key = pair_lookup.get(pair_value)
-        if key and key in PAIR_STRATEGY:
-            return PAIR_STRATEGY[key][dealer_col]
+    memo = {}
 
-    # Soft total
-    if is_soft:
-        soft_key = f'A{player_total - 11}'  # A2 → total 13 → key 'A2'
-        if soft_key in SOFT_STRATEGY:
-            return SOFT_STRATEGY[soft_key][dealer_col]
+    def rec(val, soft):
+        key = (val, soft)
+        if key in memo:
+            return memo[key]
+        if val > 21:
+            res = {'bust': 1.0}
+        elif val >= 17 and not (val == 17 and soft):
+            res = {val: 1.0}
+        else:
+            res = {}
+            for v, cnt in shoe.items():
+                if cnt <= 0:
+                    continue
+                p = cnt / total
+                new_val = val + v
+                new_soft = soft or v == 11
+                if new_val > 21 and new_soft:
+                    new_val -= 10
+                    new_soft = False
+                if new_val > 21:
+                    res['bust'] = res.get('bust', 0) + p
+                else:
+                    sub = rec(new_val, new_soft)
+                    for outcome, prob in sub.items():
+                        res[outcome] = res.get(outcome, 0) + p * prob
+        memo[key] = res
+        return res
 
-    # Hard total
-    clamped = max(5, min(21, player_total))
-    return HARD_STRATEGY[clamped][dealer_col]
+    return rec(up_value, up_value == 11)
 
 
-# ── OCR helpers for card values and game state ──────────────────────
+def stand_ev(player_val, d_probs):
+    ev = 0.0
+    for outcome, prob in d_probs.items():
+        if outcome == 'bust':
+            ev += prob * 1.0
+        elif outcome > player_val:
+            ev += prob * (-1.0)
+        elif outcome < player_val:
+            ev += prob * 1.0
+    return ev
+
+
+def draw_ev(player_val, is_soft, dealer_up, shoe_tuple, depth):
+    shoe = dict(zip(CARD_VALUES, shoe_tuple))
+    total = sum(shoe.values())
+    if total == 0:
+        return stand_ev(player_val, dealer_outcomes(dealer_up, shoe_tuple))
+
+    ev = 0.0
+    for v, cnt in shoe.items():
+        if cnt <= 0:
+            continue
+        p = cnt / total
+        new_val = player_val + v
+        new_soft = is_soft or v == 11
+        if new_val > 21 and new_soft:
+            new_val -= 10
+            new_soft = False
+        if new_val > 21:
+            outcome_ev = -1.0
+        else:
+            outcome_ev = optimal_ev(new_val, new_soft, dealer_up, shoe_tuple,
+                                    can_double=False, can_surrender=False, depth=depth + 1)[0]
+        ev += p * outcome_ev
+    return ev
+
+
+def double_ev(player_val, is_soft, dealer_up, shoe_tuple):
+    shoe = dict(zip(CARD_VALUES, shoe_tuple))
+    total = sum(shoe.values())
+    if total == 0:
+        return -2.0
+
+    d_probs = dealer_outcomes(dealer_up, shoe_tuple)
+    ev = 0.0
+    for v, cnt in shoe.items():
+        if cnt <= 0:
+            continue
+        p = cnt / total
+        new_val = player_val + v
+        new_soft = is_soft or v == 11
+        if new_val > 21 and new_soft:
+            new_val -= 10
+            new_soft = False
+        if new_val > 21:
+            outcome_ev = -2.0
+        else:
+            outcome_ev = 2.0 * stand_ev(new_val, d_probs)
+        ev += p * outcome_ev
+    return ev
+
+
+@lru_cache(maxsize=16384)
+def optimal_ev(player_val, is_soft, dealer_up, shoe_tuple, can_double=True, can_surrender=True, depth=0):
+    if depth > 10:
+        ev = stand_ev(player_val, dealer_outcomes(dealer_up, shoe_tuple))
+        return (ev, 'S')
+
+    d_probs = dealer_outcomes(dealer_up, shoe_tuple)
+
+    best_ev = stand_ev(player_val, d_probs)
+    best_action = 'S'
+
+    if can_surrender and depth == 0:
+        if -0.5 > best_ev:
+            best_ev = -0.5
+            best_action = 'U'
+
+    hit_ev = draw_ev(player_val, is_soft, dealer_up, shoe_tuple, depth)
+    if hit_ev > best_ev:
+        best_ev = hit_ev
+        best_action = 'H'
+
+    if can_double:
+        db_ev = double_ev(player_val, is_soft, dealer_up, shoe_tuple)
+        if db_ev > best_ev:
+            best_ev = db_ev
+            best_action = 'D'
+
+    return (best_ev, best_action)
+
+
+def compute_decision(player_val, is_soft, dealer_up, shoe_tuple, is_pair=False, pair_card_val=None):
+    if player_val >= 21:
+        return 'S'
+
+    if is_pair and pair_card_val and pair_card_val >= 2:
+        split_ev = 2.0 * optimal_ev(pair_card_val, pair_card_val == 11, dealer_up, shoe_tuple,
+                                     can_double=True, can_surrender=False, depth=0)[0]
+        other_ev = optimal_ev(player_val, is_soft, dealer_up, shoe_tuple,
+                              can_double=True, can_surrender=True, depth=0)[0]
+        if split_ev > other_ev:
+            return 'P'
+
+    ev, action = optimal_ev(player_val, is_soft, dealer_up, shoe_tuple,
+                            can_double=True, can_surrender=True, depth=0)
+    return action
+
 
 def extract_hand_info(ocr_text: str):
-    """
-    Parse OCR output from a blackjack embed to extract:
-      - player_total (int or None)
-      - dealer_up (int or None)
-      - is_blackjack (bool)
-      - is_bust (bool)
-      - is_pair (bool)
-      - hand_over (bool) - game result shown
-    """
     text = ocr_text.lower()
     info = {
         'player_total': None,
         'dealer_up': None,
         'is_blackjack': False,
         'is_bust': False,
-        'is_pair': False,
         'hand_over': False,
+        'player_cards': None,
     }
 
-    # Detect game over keywords
-    for kw in ['win', 'won', 'lose', 'lost', 'push', 'bust', 'blackjack']:
+    for kw in ['win', 'won', 'lose', 'lost', 'push', 'bust']:
         if kw in text:
             info['hand_over'] = True
             break
 
-    # Detect bust
     if re.search(r'\byou bust\b', text) or re.search(r'\bbust', text):
         info['is_bust'] = True
         info['hand_over'] = True
 
-    # Parse player total: look for "you: X" or "total: X" or "X (current)"
-    total_match = re.search(r'(?:you|your|total)[:\s]*(\d{1,2})', text)
+    total_match = re.search(r'(?:you|your|total)\s*:\s*[\w\s]*\((\d{1,2})\)', text)
     if total_match:
         info['player_total'] = int(total_match.group(1))
 
-    # Parse dealer upcard: look for "dealer: X" or a card value after "dealer"
-    dealer_match = re.search(r'(?:dealer|their)[:\s]*(\w+)', text)
+    dealer_match = re.search(r'(?:dealer|their)\s*:\s*(\w+)', text)
     if dealer_match:
         info['dealer_up'] = card_value(dealer_match.group(1))
 
-    # Check for pair (both cards same value)
-    pair_match = re.search(r'pair|(?:two|both)\s+\w+', text)
-    if pair_match:
-        info['is_pair'] = True
-
-    # Blackjack
     if 'blackjack' in text:
         info['is_blackjack'] = True
         info['hand_over'] = True
 
+    info['player_cards'] = parse_player_cards(ocr_text)
     return info
 
 
 def extract_hand_info_from_screen(screen_bgr):
-    """
-    OCR the blackjack embed region and extract hand info.
-    Reads from the bottom 40-90% of screen.
-    """
     h, w = screen_bgr.shape[:2]
-    crop = screen_bgr[int(h * 0.15):int(h * 0.85), :]
     text = VisionEngine.ocr_region(screen_bgr, (0, int(h * 0.15), w, int(h * 0.7)))
     if not text:
-        return {'player_total': None, 'dealer_up': None, 'hand_over': False}
+        return {'player_total': None, 'dealer_up': None, 'hand_over': False, 'player_cards': None}
     return extract_hand_info(text)
 
 
-# ── Button detection ─────────────────────────────────────────────────
-
 def find_bj_buttons(screen_bgr):
-    """
-    Find all blackjack action buttons on screen.
-    Returns dict with keys: 'hit', 'stand', 'double', 'split', 'surrender', 'play_again'.
-    Each value is a button dict or None.
-    """
     buttons = {}
     blurple = VisionEngine.find_buttons_by_color(screen_bgr, 'blurple')
     grey = VisionEngine.find_buttons_by_color(screen_bgr, 'grey')
     green = VisionEngine.find_buttons_by_color(screen_bgr, 'green')
 
-    # Label-check each button by OCR
-    for btn_list, group in [(blurple, 'blurple'), (grey, 'grey'), (green, 'green')]:
+    for btn_list in [blurple, grey, green]:
         for btn in btn_list:
             label = VisionEngine.ocr_region(screen_bgr, btn['rect']).lower()
             if 'hit' in label:
@@ -217,13 +308,7 @@ def find_bj_buttons(screen_bgr):
     return buttons
 
 
-# ── Main blackjack hand execution ────────────────────────────────────
-
 def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
-    """
-    Play one full hand of blackjack using basic strategy.
-    Returns stats dict: {won, lost, pushed, blackjack, payout_estimate}
-    """
     result = {
         'completed': False,
         'won': False,
@@ -237,25 +322,45 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
     username = config.get("discord_username", "Xenron")
     skip_check = config.get("skip_embed_check", False)
 
-    # Verify embed ownership
     if not skip_check and not VisionEngine.verify_embed_owner(screen_bgr, username):
         log_func("[!] Blackjack embed not ours.")
         result['error'] = 'embed_owner_mismatch'
         return result
 
-    # Play the hand loop (Hit until stand/bust/21)
+    info = extract_hand_info_from_screen(screen_bgr)
+    player_cards = info.get('player_cards') or []
+    dealer_up = info.get('dealer_up')
+
+    for c in player_cards:
+        _shoe.remove(c)
+    if dealer_up:
+        _shoe.remove(dealer_up)
+    if player_cards:
+        log_func(f"[+] Cards seen: {player_cards}, dealer up: {dealer_up} | Shoe: {_shoe.total()} remaining")
+
+    deck_info = info
     max_hits = 10
     for hit_num in range(max_hits):
         if hit_num > 0:
             time.sleep(random.uniform(1.0, 2.0))
             screen_bgr = PlatformManager.capture_scaled_screen()
+            deck_info = extract_hand_info_from_screen(screen_bgr)
 
-        info = extract_hand_info_from_screen(screen_bgr)
         buttons = find_bj_buttons(screen_bgr)
 
-        # If hand is over (bust, stand, blackjack, etc.)
-        if info['hand_over'] or info['is_blackjack']:
-            log_func(f"[+] Hand over. Looking for Play Again...")
+        if deck_info['hand_over'] or deck_info['is_blackjack']:
+            log_func("[+] Hand over.")
+
+            final_text = VisionEngine.ocr_region(
+                screen_bgr, (0, int(screen_bgr.shape[0] * 0.15),
+                             screen_bgr.shape[1], int(screen_bgr.shape[0] * 0.7)))
+            if final_text:
+                dealer_final = parse_dealer_final_cards(final_text)
+                if dealer_final:
+                    for c in dealer_final:
+                        _shoe.remove(c)
+                    log_func(f"[+] Dealer final cards: {dealer_final} | Shoe: {_shoe.total()} remaining")
+
             if buttons.get('play_again'):
                 VisionEngine.click_button(buttons['play_again'])
                 log_func("[+] Clicked Play Again.")
@@ -263,8 +368,8 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
             result['completed'] = True
             return result
 
-        total = info['player_total']
-        dealer = info['dealer_up']
+        total = deck_info['player_total']
+        dealer = deck_info['dealer_up']
 
         if total is None or dealer is None:
             log_func("[!] Could not read hand values. Hitting as fallback.")
@@ -273,17 +378,10 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
                 continue
             break
 
-        # Determine hand type and make decision
-        is_soft = False
-        # Heuristic pair detection: if detected as pair, pair value = total/2
-        # (A-A is ambiguous with 6-6; will be improved with card-specific OCR)
-        pair_value = (total // 2) if info['is_pair'] and total % 2 == 0 else 0
-        # If total > 21, we busted
         if total > 21:
             log_func(f"[!] Bust with {total}.")
             result['lost'] = True
             result['completed'] = True
-            # Wait for result screen
             time.sleep(random.uniform(1.5, 2.5))
             screen_bgr = PlatformManager.capture_scaled_screen()
             buttons = find_bj_buttons(screen_bgr)
@@ -291,61 +389,78 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
                 VisionEngine.click_button(buttons['play_again'])
             return result
 
-        dec = decision(total, dealer, is_soft, pair_value)
-        log_func(f"[+] You: {total}, Dealer: {dealer} → {dec}")
+        current_cards = deck_info.get('player_cards') or player_cards
+        if hit_num > 0 and current_cards and len(current_cards) > len(player_cards):
+            drawn = current_cards[-1]
+            _shoe.remove(drawn)
+            player_cards = current_cards
+            log_func(f"[+] Drew {drawn} | Shoe: {_shoe.total()} remaining")
+
+        is_soft = any(c == 11 for c in (current_cards or [])) and total <= 21
+        is_pair = len(current_cards or []) == 2 and (current_cards[0] == current_cards[1])
+        pair_val = current_cards[0] if (current_cards and is_pair) else 0
+
+        dec = compute_decision(total, is_soft, dealer, _shoe.as_tuple(),
+                               is_pair=is_pair, pair_card_val=pair_val)
+        soft_label = " soft" if is_soft else ""
+        log_func(f"[+] You: {total}{soft_label}, Dealer: {dealer}, Cards: {current_cards} → {dec}")
 
         if dec == 'U' and buttons.get('surrender'):
             VisionEngine.click_button(buttons['surrender'])
             log_func("[+] Surrendered.")
             time.sleep(random.uniform(1.5, 2.5))
-            screen_bgr = PlatformManager.capture_scaled_screen()
-            buttons = find_bj_buttons(screen_bgr)
-            if buttons.get('play_again'):
-                VisionEngine.click_button(buttons['play_again'])
             result['completed'] = True
             return result
 
-        elif dec == 'P' and buttons.get('split'):
+        if dec == 'P' and buttons.get('split'):
             VisionEngine.click_button(buttons['split'])
             log_func("[+] Split.")
             continue
 
-        elif dec == 'D' and buttons.get('double'):
+        if dec == 'D' and buttons.get('double'):
             VisionEngine.click_button(buttons['double'])
             log_func("[+] Double down.")
             result['completed'] = True
             return result
 
-        elif dec == 'D' and not buttons.get('double'):
-            # Can't double, hit instead
+        if dec == 'D' and not buttons.get('double'):
             if buttons.get('hit'):
                 VisionEngine.click_button(buttons['hit'])
                 log_func("[+] Hit (Double unavailable).")
                 continue
 
-        elif dec == 'H' and buttons.get('hit'):
+        if dec == 'H' and buttons.get('hit'):
             VisionEngine.click_button(buttons['hit'])
             log_func("[+] Hit.")
             continue
 
-        elif dec == 'S' and buttons.get('stand'):
+        if dec == 'S' and buttons.get('stand'):
             VisionEngine.click_button(buttons['stand'])
             log_func("[+] Stand.")
             time.sleep(random.uniform(1.5, 2.5))
             screen_bgr = PlatformManager.capture_scaled_screen()
             buttons = find_bj_buttons(screen_bgr)
+
+            final_text = VisionEngine.ocr_region(
+                screen_bgr, (0, int(screen_bgr.shape[0] * 0.15),
+                             screen_bgr.shape[1], int(screen_bgr.shape[0] * 0.7)))
+            if final_text:
+                dealer_final = parse_dealer_final_cards(final_text)
+                if dealer_final:
+                    for c in dealer_final:
+                        _shoe.remove(c)
+                    log_func(f"[+] Dealer final cards: {dealer_final} | Shoe: {_shoe.total()} remaining")
+
             if buttons.get('play_again'):
                 VisionEngine.click_button(buttons['play_again'])
             result['completed'] = True
             return result
 
-        else:
-            # Fallback: hit if unsure
-            if buttons.get('hit'):
-                VisionEngine.click_button(buttons['hit'])
-                log_func("[+] Hit (fallback).")
-                continue
-            break
+        if buttons.get('hit'):
+            VisionEngine.click_button(buttons['hit'])
+            log_func("[+] Hit (fallback).")
+            continue
+        break
 
     result['completed'] = True
     return result

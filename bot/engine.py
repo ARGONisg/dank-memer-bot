@@ -11,6 +11,7 @@ from bot.killswitch import Killswitch
 from bot.antidetection import human_type
 from bot.minigames import fishing as fishing_mg
 from bot.minigames import blackjack as bj_mg
+from bot.minigames.blackjack import reset_shoe
 from bot.minigames import slots as slots_mg
 
 logger = logging.getLogger("DankBot.Engine")
@@ -168,6 +169,7 @@ class BotEngine:
         self._iteration_count = 0
         self._consecutive_failures = 0
         self._killswitch.start()
+        reset_shoe()
         self.log("[*] Bot engine started. Killswitch: ESC or 'q'.")
 
         while self.running:

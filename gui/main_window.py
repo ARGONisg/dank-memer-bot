@@ -21,6 +21,7 @@ class BotLogSignals(QObject):
     cooldown_signal = Signal(float)
     stopped_signal = Signal()
     stats_signal = Signal(dict)
+    calibration_finished = Signal()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         self.signals.cooldown_signal.connect(self.update_cooldown_field)
         self.signals.stopped_signal.connect(self.on_bot_stopped)
         self.signals.stats_signal.connect(self.update_stats)
+        self.signals.calibration_finished.connect(self.on_calibration_finished)
 
         self.bot = BotEngine(self.config, self.signals)
         self.bot_thread = None
@@ -85,7 +87,7 @@ class MainWindow(QMainWindow):
         self.start_btn = QPushButton("START BOT")
         self.start_btn.setObjectName("startBtn")
         self.start_btn.clicked.connect(self.start_bot)
-        self.settings_tab.calibrate_btn.clicked.connect(self.bot.calibrate_cooldown)
+        self.settings_tab.calibrate_btn.clicked.connect(self.start_calibration)
         self.webhook_tab.test_btn.clicked.connect(self.test_webhook)
 
         self.stop_btn = QPushButton("STOP")
@@ -152,6 +154,29 @@ class MainWindow(QMainWindow):
             self.append_log("[+] Webhook test successful.")
         else:
             self.append_log(f"[!] Webhook test failed: {result['error']}")
+
+    def start_calibration(self):
+        self.settings_tab.calibrate_btn.setEnabled(False)
+        self.settings_tab.sync_to_config(self.config)
+        self.config.save_profile()
+        self.bot.apply_config()
+        self.append_log("[*] Starting cooldown calibration thread...")
+
+        from threading import Thread
+        def run_cal():
+            try:
+                self.bot.calibrate_cooldown()
+            except Exception as e:
+                self.append_log(f"[!] Calibration error: {e}")
+            finally:
+                self.signals.calibration_finished.emit()
+
+        Thread(target=run_cal, daemon=True).start()
+
+    @Slot()
+    def on_calibration_finished(self):
+        self.settings_tab.calibrate_btn.setEnabled(True)
+        self.append_log("[+] Cooldown calibration thread complete.")
 
     def start_bot(self):
         self.append_log("[*] Syncing configuration and starting bot...")
