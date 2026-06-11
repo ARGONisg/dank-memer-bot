@@ -17,11 +17,15 @@ pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract'
 # Discord Red      #DA373C → BGR(60, 55, 218)
 
 BUTTON_COLORS = {
-    'blurple': [(202, 81, 68), (255, 131, 118)],   # lower, upper BGR
-    'green':   [(69, 135, 15), (115, 195, 55)],
-    'grey':    [(68, 60, 58),  (115, 110, 108)],
-    'red':     [(40, 35, 188), (85, 80, 245)],
+    'blurple': [(180, 60, 50),  (275, 150, 135)],   # lower, upper BGR — broadened
+    'green':   [(55, 115, 10),  (135, 215, 75)],     # broadened
+    'grey':    [(55, 45, 45),   (135, 130, 130)],    # broadened
+    'red':     [(30, 25, 175),  (100, 95, 255)],     # broadened
 }
+
+# Debug: set to True to save annotated screenshots to data/debug/
+_DEBUG_SAVE = False
+_DEBUG_DIR = None
 
 # Blue water hue bounds in HSV (OpenCV: H 0..180)
 WATER_HSV_LOWER = np.array([88, 40, 40])
@@ -30,6 +34,27 @@ WATER_HSV_UPPER = np.array([132, 255, 255])
 
 class VisionEngine:
     """Collection of static CV methods for screen analysis."""
+
+    @staticmethod
+    def enable_debug(enable: bool = True, directory: str = None):
+        global _DEBUG_SAVE, _DEBUG_DIR
+        _DEBUG_SAVE = enable
+        _DEBUG_DIR = directory
+
+    @staticmethod
+    def save_debug_screenshot(screen_bgr, label: str, annotated=None):
+        if not _DEBUG_SAVE:
+            return
+        import os, time
+        d = _DEBUG_DIR or os.path.join(os.path.dirname(__file__), '..', 'data', 'debug')
+        os.makedirs(d, exist_ok=True)
+        ts = time.strftime("%H%M%S")
+        img = screen_bgr.copy()
+        if annotated is not None:
+            for r in annotated:
+                x, y, w, h = r['rect']
+                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        cv2.imwrite(os.path.join(d, f"{label}_{ts}.png"), img)
 
     @staticmethod
     def set_tesseract_path(path: str):
@@ -216,6 +241,7 @@ class VisionEngine:
         """Run OCR on a specific (x, y, w, h) region. Returns stripped text."""
         x, y, w, h = rect
         if w <= 2 or h <= 2:
+            VisionEngine.save_debug_screenshot(screen_bgr, f"ocr_tiny_{x}_{y}")
             return ""
         # Clamp to screen bounds
         sh, sw = screen_bgr.shape[:2]
@@ -228,7 +254,10 @@ class VisionEngine:
         region = screen_bgr[y:y + h, x:x + w]
         grey = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(grey, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return pytesseract.image_to_string(thresh, config='--psm 7').strip()
+        text = pytesseract.image_to_string(thresh, config='--psm 6 --oem 3').strip()
+        if not text:
+            VisionEngine.save_debug_screenshot(screen_bgr, f"ocr_empty_{x}_{y}_{w}_{h}")
+        return text
 
     @staticmethod
     def find_embed_header_text(screen_bgr):

@@ -400,8 +400,15 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
         is_pair = len(current_cards or []) == 2 and (current_cards[0] == current_cards[1])
         pair_val = current_cards[0] if (current_cards and is_pair) else 0
 
-        dec = compute_decision(total, is_soft, dealer, _shoe.as_tuple(),
-                               is_pair=is_pair, pair_card_val=pair_val)
+        try:
+            dec = compute_decision(total, is_soft, dealer, _shoe.as_tuple(),
+                                   is_pair=is_pair, pair_card_val=pair_val)
+        except Exception as e:
+            shoe_snapshot = _shoe.as_tuple()
+            log_func(f"[!] Decision engine error: {e} | total={total} soft={is_soft} dealer={dealer} pair={pair_val} shoe={shoe_snapshot}")
+            logger.exception("Blackjack decision error")
+            dec = 'H'
+
         soft_label = " soft" if is_soft else ""
         log_func(f"[+] You: {total}{soft_label}, Dealer: {dealer}, Cards: {current_cards} → {dec}")
 
