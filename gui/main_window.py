@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QTextEdit, QLabel, QGroupBox, QVBoxLayout as VBox
 )
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QShortcut, QKeySequence
 
 from gui.styles import QSS
 from gui.settings_tab import SettingsTab
@@ -97,7 +97,8 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self.stop_btn)
         main_layout.addLayout(btn_layout)
 
-        footer = QLabel("Killswitch: Press ESC or q globally to abort.")
+        self._setup_shortcuts()
+        footer = QLabel("Killswitch: ESC (global) · q (focused) · STOP button")
         footer.setStyleSheet("color: #ed4245; font-size: 11px; font-weight: 500;")
         footer.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(footer)
@@ -205,6 +206,22 @@ class MainWindow(QMainWindow):
             self.append_log("[+] Hourly summary sent via webhook.")
         else:
             self.append_log(f"[!] Hourly summary failed: {result['error']}")
+
+    def _setup_shortcuts(self):
+        self._esc_shortcut = QShortcut(QKeySequence("Esc"), self)
+        self._esc_shortcut.setContext(Qt.ApplicationShortcut)
+        self._esc_shortcut.activated.connect(self._shortcut_triggered)
+
+    def _shortcut_triggered(self):
+        if self.bot.running:
+            self.append_log("[!] Killswitch triggered via keyboard.")
+            self.bot._killswitch_triggered()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Q and self.bot.running:
+            self.append_log("[!] Killswitch triggered via keyboard.")
+            self.bot._killswitch_triggered()
+        super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.bot.running = False

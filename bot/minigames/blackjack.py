@@ -235,9 +235,10 @@ def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
     }
 
     username = config.get("discord_username", "Xenron")
+    skip_check = config.get("skip_embed_check", False)
 
     # Verify embed ownership
-    if not VisionEngine.verify_embed_owner(screen_bgr, username):
+    if not skip_check and not VisionEngine.verify_embed_owner(screen_bgr, username):
         log_func("[!] Blackjack embed not ours.")
         result['error'] = 'embed_owner_mismatch'
         return result

@@ -52,9 +52,10 @@ def execute_fishing_cycle(screen_bgr, config, log_func) -> dict:
     username = config.get("discord_username", "Xenron")
     min_rarity = config.get("min_rarity_to_keep", "Rare")
     sell_currency = config.get("sell_currency_pref", "Coins")
+    skip_check = config.get("skip_embed_check", False)
 
     # ── Step 1: Verify embed ownership ──
-    if not VisionEngine.verify_embed_owner(screen_bgr, username):
+    if not skip_check and not VisionEngine.verify_embed_owner(screen_bgr, username):
         log_func("[!] Embed not ours or not detected. Waiting...")
         result['error'] = 'embed_owner_mismatch'
         return result

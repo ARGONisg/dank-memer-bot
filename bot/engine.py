@@ -70,10 +70,14 @@ class BotEngine:
         self._activity_index = 0
         self._last_summary_time = time.time()
         self._summary_interval = 3600
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 3
+        self._skip_embed_check = False
         self._killswitch = Killswitch(on_trigger=self._killswitch_triggered)
 
     def log(self, message):
         timestamp = time.strftime("%H:%M:%S")
+        logger.info("%s", message)
         self.signals.log_signal.emit(f"[{timestamp}] {message}")
 
     def apply_config(self):
@@ -101,6 +105,7 @@ class BotEngine:
         self._slots_enabled = s.get("slots_enabled", False)
         self._slots_cmd = s.get("slots_command", "slots 100")
         self._slots_cooldown = s.get("slots_cooldown", 20.0)
+        self._skip_embed_check = s.get("skip_embed_check", False)
 
     def send_command(self, cmd_text):
         if not self.running:
@@ -161,6 +166,7 @@ class BotEngine:
         self.stats["session_start"] = time.time()
         self.state = STATE_INIT
         self._iteration_count = 0
+        self._consecutive_failures = 0
         self._killswitch.start()
         self.log("[*] Bot engine started. Killswitch: ESC or 'q'.")
 
@@ -222,7 +228,18 @@ class BotEngine:
     def _state_init(self):
         """Pick the next enabled activity and send its command."""
         self.log(f"[*] --- Cycle {self._iteration_count} ---")
-        PlatformManager.focus_discord()
+        if not PlatformManager.focus_discord():
+            self.log("[!] Could not focus Discord. Retrying in 10s...")
+            time.sleep(10)
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self.log("[!] Too many consecutive failures. Entering cooldown.")
+                self._consecutive_failures = 0
+                self.state = STATE_COOLDOWN
+                return
+            self.state = STATE_INIT
+            return
+        self._consecutive_failures = 0
         time.sleep(random.uniform(0.3, 0.5))
 
         # Build list of enabled activities
@@ -265,13 +282,22 @@ class BotEngine:
             return
 
         screen = self.capture_screen()
-        owned = VisionEngine.verify_embed_owner(screen, self._username)
 
-        if not owned:
-            self.log("[!] Embed not ours or not visible. Retrying...")
-            time.sleep(random.uniform(2.0, 4.0))
-            self.state = STATE_INIT
-            return
+        if not self._skip_embed_check:
+            owned = VisionEngine.verify_embed_owner(screen, self._username)
+
+            if not owned:
+                self._consecutive_failures += 1
+                self.log(f"[!] Embed not ours or not visible. (fail {self._consecutive_failures}/{self._max_consecutive_failures})")
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._consecutive_failures = 0
+                    self.log("[!] Too many embed detection failures. Entering cooldown.")
+                    self.state = STATE_COOLDOWN
+                    return
+                time.sleep(random.uniform(2.0, 4.0))
+                self.state = STATE_INIT
+                return
+            self._consecutive_failures = 0
 
         # Check if the water grid is already visible (Fish Again → minigame)
         water = VisionEngine.find_water_grid(screen)
@@ -313,7 +339,12 @@ class BotEngine:
 
         shadow_cell = VisionEngine.find_fish_shadow(water_rect, screen)
         if shadow_cell is None:
-            self.log("[!] Fish shadow not found with confidence. Retrying...")
+            self._consecutive_failures += 1
+            self.log(f"[!] Fish shadow not found. (fail {self._consecutive_failures}/{self._max_consecutive_failures})")
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._consecutive_failures = 0
+                self.state = STATE_COOLDOWN
+                return
             self.state = STATE_INIT
             return
 
@@ -322,9 +353,15 @@ class BotEngine:
             screen, water_rect, rows=3, cols=3, color_name='grey'
         )
         if not catch_btns:
-            self.log("[!] Catch buttons not found.")
+            self._consecutive_failures += 1
+            self.log(f"[!] Catch buttons not found. (fail {self._consecutive_failures}/{self._max_consecutive_failures})")
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._consecutive_failures = 0
+                self.state = STATE_COOLDOWN
+                return
             self.state = STATE_INIT
             return
+        self._consecutive_failures = 0
 
         target = catch_btns[shadow_cell]
         self.log(f"[+] Shadow cell {shadow_cell} → clicking Catch @ ({target['cx']}, {target['cy']})")
@@ -378,7 +415,7 @@ class BotEngine:
             return
 
         screen = self.capture_screen()
-        if not VisionEngine.verify_embed_owner(screen, self._username):
+        if not self._skip_embed_check and not VisionEngine.verify_embed_owner(screen, self._username):
             self.log("[!] Blackjack embed not ours. Retrying...")
             self.state = STATE_INIT
             return
@@ -408,7 +445,7 @@ class BotEngine:
             return
 
         screen = self.capture_screen()
-        if not VisionEngine.verify_embed_owner(screen, self._username):
+        if not self._skip_embed_check and not VisionEngine.verify_embed_owner(screen, self._username):
             self.log("[!] Slots embed not ours. Retrying...")
             self.state = STATE_INIT
             return

@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QFormLayout, QLineEdit,
-    QComboBox, QDoubleSpinBox, QPushButton, QLabel, QScrollArea, QFrame
+    QComboBox, QDoubleSpinBox, QPushButton, QLabel, QScrollArea, QFrame, QCheckBox
 )
 
 RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Exotic", "Mythical"]
@@ -113,6 +113,9 @@ class SettingsTab(QWidget):
         safety_form = _make_form(safety_group)
         self.emergency_key_input = QLineEdit(self.config.get("emergency_key", "esc"))
         safety_form.addRow("Killswitch Key:", self.emergency_key_input)
+        self.skip_embed_check_cb = QCheckBox("Skip embed ownership verification")
+        self.skip_embed_check_cb.setChecked(self.config.get("skip_embed_check", False))
+        safety_form.addRow("", self.skip_embed_check_cb)
         layout.addWidget(safety_group)
 
         scroll.setWidget(container)
@@ -135,3 +138,4 @@ class SettingsTab(QWidget):
         config.set("min_typing_delay", self.min_delay_spin.value())
         config.set("max_typing_delay", self.max_delay_spin.value())
         config.set("emergency_key", self.emergency_key_input.text())
+        config.set("skip_embed_check", self.skip_embed_check_cb.isChecked())
