@@ -15,6 +15,7 @@ if project_root not in sys.path:
 
 from PySide6.QtWidgets import QApplication
 from gui.main_window import MainWindow
+from bot.vision import VisionEngine
 
 def setup_logging():
     log_dir = os.path.join(project_root, "data")
@@ -32,6 +33,8 @@ def setup_logging():
 
 def main():
     setup_logging()
+    # Enable debug screenshot dumping to data/debug/ when OCR fails
+    VisionEngine.enable_debug(True)
     logger = logging.getLogger("DankBot.Main")
     logger.info("Starting Dank Memer Automation Framework...")
 
