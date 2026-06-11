@@ -1,7 +1,17 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QCheckBox, QLabel, QSpinBox,
-    QFormLayout, QHBoxLayout
+    QFormLayout, QScrollArea, QFrame
 )
+
+def _make_form(group):
+    f = QFormLayout(group)
+    f.setLabelAlignment(Qt.AlignLeft)
+    f.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    f.setContentsMargins(12, 16, 12, 12)
+    f.setHorizontalSpacing(16)
+    f.setVerticalSpacing(8)
+    return f
 
 class SchedulerTab(QWidget):
     def __init__(self, config):
@@ -10,11 +20,25 @@ class SchedulerTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+
+        container = QWidget()
+        container.setObjectName("schedulerContainer")
+        container.setStyleSheet("#schedulerContainer { background-color: #313338; }")
+        layout = QVBoxLayout(container)
+        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setAlignment(Qt.AlignTop)
 
         # ── Activity Toggles ──
         act_group = QGroupBox("Activity Toggles")
         act_layout = QVBoxLayout(act_group)
+        act_layout.setContentsMargins(12, 16, 12, 12)
+        act_layout.setSpacing(10)
+
         self.fish_check = QCheckBox("Fishing")
         self.fish_check.setChecked(self.config.get("fish_enabled", True))
         self.bj_check = QCheckBox("Blackjack")
@@ -28,7 +52,8 @@ class SchedulerTab(QWidget):
 
         # ── Break Settings ──
         break_group = QGroupBox("Human Break Settings")
-        break_form = QFormLayout(break_group)
+        break_form = _make_form(break_group)
+
         self.break_interval_spin = QSpinBox()
         self.break_interval_spin.setRange(15, 480)
         self.break_interval_spin.setValue(self.config.get("break_interval_mins", 60))
@@ -54,7 +79,11 @@ class SchedulerTab(QWidget):
         break_form.addRow("Random Jitter:", self.jitter_spin)
         layout.addWidget(break_group)
 
-        layout.addStretch()
+        scroll.setWidget(container)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
 
     def sync_to_config(self, config):
         config.set("fish_enabled", self.fish_check.isChecked())

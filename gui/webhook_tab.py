@@ -1,7 +1,17 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QCheckBox, QLineEdit, QPushButton,
-    QFormLayout, QLabel, QHBoxLayout
+    QFormLayout, QLabel, QScrollArea, QFrame
 )
+
+def _make_form(group):
+    f = QFormLayout(group)
+    f.setLabelAlignment(Qt.AlignLeft)
+    f.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    f.setContentsMargins(12, 16, 12, 12)
+    f.setHorizontalSpacing(16)
+    f.setVerticalSpacing(8)
+    return f
 
 class WebhookTab(QWidget):
     def __init__(self, config):
@@ -10,26 +20,38 @@ class WebhookTab(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
+        container = QWidget()
+        container.setObjectName("webhookContainer")
+        container.setStyleSheet("#webhookContainer { background-color: #313338; }")
+        layout = QVBoxLayout(container)
+        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setAlignment(Qt.AlignTop)
+
+        # ── Webhook Configuration ──
         main_group = QGroupBox("Discord Webhook Configuration")
-        main_form = QFormLayout(main_group)
-
+        main_form = _make_form(main_group)
         self.enable_check = QCheckBox("Enable Webhook Notifications")
         self.enable_check.setChecked(self.config.get("webhook_enabled", False))
-
         self.url_input = QLineEdit(self.config.get("webhook_url", ""))
         self.url_input.setPlaceholderText("https://discord.com/api/webhooks/...")
-
         self.test_btn = QPushButton("Test Webhook")
-
         main_form.addRow("", self.enable_check)
         main_form.addRow("Webhook URL:", self.url_input)
         main_form.addRow("", self.test_btn)
         layout.addWidget(main_group)
 
+        # ── Notification Events ──
         events_group = QGroupBox("Notification Events")
         events_form = QFormLayout(events_group)
+        events_form.setContentsMargins(12, 16, 12, 12)
+        events_form.setVerticalSpacing(8)
+
         self.on_start_check = QCheckBox("Bot Started")
         self.on_start_check.setChecked(True)
         self.on_stop_check = QCheckBox("Bot Stopped")
@@ -51,11 +73,11 @@ class WebhookTab(QWidget):
         events_form.addRow("", self.on_summary_check)
         layout.addWidget(events_group)
 
-        status_label = QLabel("Webhooks send rich embed messages with session stats and alerts.")
-        status_label.setStyleSheet("color: #a6e3a1; padding: 8px;")
-        status_label.setWordWrap(True)
-        layout.addWidget(status_label)
-        layout.addStretch()
+        scroll.setWidget(container)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(scroll)
 
     def sync_to_config(self, config):
         config.set("webhook_enabled", self.enable_check.isChecked())
