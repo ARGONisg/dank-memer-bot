@@ -1,3 +1,11 @@
+"""
+Scheduler Tab — Activity toggles, per-activity cooldowns, and human-break timing.
+
+Contains two draggable card groups:
+  - Activity Settings: enable/disable fishing, blackjack, slots + cooldown values
+  - Human Break Settings: interval between breaks, min/max duration, jitter %
+"""
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QCheckBox, QLabel, QSpinBox, QDoubleSpinBox,
@@ -5,29 +13,30 @@ from PySide6.QtWidgets import (
 )
 from gui.draggable import DraggableGroupBox, DraggableCanvas
 
+
 class SchedulerTab(QWidget):
+    """Activity schedule tab: toggles and cooldowns for each minigame."""
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.init_ui()
 
     def init_ui(self):
-        # Main layout for the widget
+        """Build the scrollable canvas with two draggable cards."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Create a scroll area
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
-        # Container widget for scroll contents (using DraggableCanvas for thinking board support)
         container = DraggableCanvas()
         container.setObjectName("schedulerContainer")
         container.setStyleSheet("#schedulerContainer { background-color: #313338; }")
-        
+
         # ── Activity Settings ──
         act_group = DraggableGroupBox("Activity Settings", container)
         act_form = QFormLayout(act_group)
@@ -37,26 +46,26 @@ class SchedulerTab(QWidget):
         act_form.setContentsMargins(15, 15, 15, 15)
         act_form.setHorizontalSpacing(20)
         act_form.setVerticalSpacing(10)
-        
+
         self.fish_check = QCheckBox("Enable Fishing")
         self.fish_check.setChecked(self.config.get("fish_enabled", True))
-        
+
         self.bj_check = QCheckBox("Enable Blackjack")
         self.bj_check.setChecked(self.config.get("bj_enabled", False))
-        
+
         self.bj_cooldown_spin = QDoubleSpinBox()
         self.bj_cooldown_spin.setRange(5.0, 300.0)
         self.bj_cooldown_spin.setValue(self.config.get("bj_cooldown", 45.0))
         self.bj_cooldown_spin.setSuffix(" sec")
-        
+
         self.slots_check = QCheckBox("Enable Slots")
         self.slots_check.setChecked(self.config.get("slots_enabled", False))
-        
+
         self.slots_cooldown_spin = QDoubleSpinBox()
         self.slots_cooldown_spin.setRange(5.0, 300.0)
         self.slots_cooldown_spin.setValue(self.config.get("slots_cooldown", 20.0))
         self.slots_cooldown_spin.setSuffix(" sec")
-        
+
         act_form.addRow("Fishing:", self.fish_check)
         act_form.addRow("Blackjack:", self.bj_check)
         act_form.addRow("Blackjack Cooldown:", self.bj_cooldown_spin)
@@ -101,6 +110,7 @@ class SchedulerTab(QWidget):
         main_layout.addWidget(scroll)
 
     def sync_to_config(self, config):
+        """Write all widget values into the ConfigManager settings dict."""
         config.set("fish_enabled", self.fish_check.isChecked())
         config.set("bj_enabled", self.bj_check.isChecked())
         config.set("bj_cooldown", self.bj_cooldown_spin.value())

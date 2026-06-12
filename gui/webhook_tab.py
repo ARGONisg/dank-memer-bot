@@ -1,3 +1,13 @@
+"""
+Webhook Tab — Discord webhook configuration for notifications and summaries.
+
+Contains three draggable card groups:
+  - Discord Webhook Configuration: enable toggle, URL input, test button
+  - Notification Events: checkboxes for which events trigger webhook messages
+    (start, stop, error, rare catch, break, hourly summary)
+  - Webhook Information: status/tips label
+"""
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QCheckBox, QLineEdit, QPushButton,
@@ -5,25 +15,26 @@ from PySide6.QtWidgets import (
 )
 from gui.draggable import DraggableGroupBox, DraggableCanvas
 
+
 class WebhookTab(QWidget):
+    """Webhook notification configuration tab."""
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.init_ui()
 
     def init_ui(self):
-        # Main layout for the widget
+        """Build the scrollable canvas with three draggable cards."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Create a scroll area
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
-        # Container widget for scroll contents (using DraggableCanvas for thinking board support)
         container = DraggableCanvas()
         container.setObjectName("webhookContainer")
         container.setStyleSheet("#webhookContainer { background-color: #313338; }")
@@ -90,5 +101,6 @@ class WebhookTab(QWidget):
         main_layout.addWidget(scroll)
 
     def sync_to_config(self, config):
+        """Write widget values into the ConfigManager settings dict."""
         config.set("webhook_enabled", self.enable_check.isChecked())
         config.set("webhook_url", self.url_input.text())

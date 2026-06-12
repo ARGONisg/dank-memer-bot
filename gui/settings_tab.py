@@ -1,3 +1,17 @@
+"""
+Settings Tab — Command, gear, sell strategy, timing, and safety configuration.
+
+Contains five draggable card groups:
+  - Command Settings: prefix, username, command strings
+  - Gear Configuration: bait and equipment selection
+  - Sell / Keep Strategy: min rarity to keep, sell currency
+  - Timing & Calibration: fish cooldown, typing delays, calibrate button
+  - Safety: killswitch key, skip embed check
+
+All values are sync'd to ConfigManager via ``sync_to_config()`` when the
+bot starts or when calibration runs.
+"""
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QFormLayout, QLineEdit,
@@ -10,25 +24,26 @@ SELL_CURRENCIES = ["Coins", "Fish Points"]
 BAIT_ITEMS = ["None", "Bread", "Worms", "Soggy Salad", "Magical Bait", "Minnow", "Shrimp", "Squid"]
 EQUIP_ITEMS = ["None", "Fishing Rod", "Fibreglass Rod", "Golden Rod", "Diamond Rod", "Lava Rod", "Galactic Rod"]
 
+
 class SettingsTab(QWidget):
+    """Settings configuration tab with draggable cards."""
+
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.init_ui()
 
     def init_ui(self):
-        # Main layout for the widget
+        """Build the scrollable canvas with five draggable setting cards."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # Create a scroll area
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
-        # Container widget for scroll contents (using DraggableCanvas for thinking board support)
         container = DraggableCanvas()
         container.setObjectName("settingsContainer")
         container.setStyleSheet("#settingsContainer { background-color: #313338; }")
@@ -119,7 +134,10 @@ class SettingsTab(QWidget):
         self.max_delay_spin.setValue(self.config.get("max_typing_delay", 0.9))
         self.max_delay_spin.setSingleStep(0.1)
         self.calibrate_btn = QPushButton("Calibrate Cooldown")
-        self.calibrate_btn.setStyleSheet("QPushButton { background-color: #5865F2; color: #ffffff; font-weight: 600; } QPushButton:hover { background-color: #4752C4; }")
+        self.calibrate_btn.setStyleSheet(
+            "QPushButton { background-color: #5865F2; color: #ffffff; font-weight: 600; }"
+            "QPushButton:hover { background-color: #4752C4; }"
+        )
         timing_form.addRow("Fish Cooldown:", self.cooldown_spin)
         timing_form.addRow("", self.calibrate_btn)
         timing_form.addRow("Min Typing Delay:", self.min_delay_spin)
@@ -145,6 +163,7 @@ class SettingsTab(QWidget):
         main_layout.addWidget(scroll)
 
     def sync_to_config(self, config):
+        """Write all widget values into the ConfigManager settings dict."""
         config.set("command_prefix", self.prefix_input.text())
         config.set("discord_username", self.username_input.text())
         config.set("fish_command", self.fish_command_input.text())

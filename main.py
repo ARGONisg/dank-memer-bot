@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 """
-Dank Memer Automation Framework
-Modular, cross-platform macro bot with PySide6 GUI.
+Dank Memer Automation Framework — Application Entry Point.
+
+Initialises:
+  1. Project root in sys.path (for reliable imports from subdirectories).
+  2. Logging (file + stdout) at DEBUG level.
+  3. VisionEngine debug mode (saves annotated screenshots to data/debug/).
+  4. QApplication with Discord-dark style.
+  5. MainWindow (the root GUI).
+
+Invocation:
+    python3 main.py          # Launch the GUI
+    python3 main.py --headless  # (future) headless CLI mode
 """
 
 import sys

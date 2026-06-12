@@ -1,3 +1,71 @@
+"""
+Blackjack Minigame — Shoe counting, Bewersdorff expected-value decision engine,
+OCR card reading, and automated hand execution.
+
+Overview
+========
+The bot plays blackjack using a *composition-dependent basic strategy* driven
+by expected-value (EV) maximisation via the Bewersdorff algorithm. Unlike
+simple "basic strategy" lookup tables, this algorithm computes exact EVs
+for hit / stand / double / split / surrender given the current shoe
+composition and the dealer's upcard.
+
+Shoe Tracking
+=============
+A running count of every card denomination (2-11, where 11 = Ace) is
+maintained in a global ``_shoe`` object. Cards the bot has seen (its own
+hand, the dealer's upcard, and the dealer's final hand) are removed from
+the shoe so that probability calculations reflect the true remaining deck
+composition.
+
+The shoe defaults to 5 decks (standard for Dank Memer). It is reset
+whenever the engine starts (``reset_shoe()`` called in ``run_loop()``).
+
+Decision Algorithm (Bewersdorff)
+=================================
+  1. ``dealer_outcomes(upcard, shoe_tuple)`` recursively computes the
+     probability distribution of the dealer's final hand value (or bust)
+     by enumerating all possible draw sequences from the current shoe.
+
+  2. ``stand_ev(player_val, d_probs)`` = expected value of standing given
+     the dealer outcome distribution.
+
+  3. ``draw_ev(...)`` = expected value of hitting one card and then playing
+     optimally thereafter (recursive call to ``optimal_ev``).
+
+  4. ``double_ev(...)`` = expected value of doubling down (2x bet, exactly
+     one card, then stand).
+
+  5. ``optimal_ev(...)`` returns the maximum EV among stand / hit / double
+     (and optionally surrender at depth 0), plus the corresponding action.
+
+  6. ``compute_decision(...)`` wraps ``optimal_ev`` and also considers
+     splitting pairs (2x optimal_ev per split hand vs. best alternative).
+
+All functions use ``@lru_cache`` so repeated calls with identical arguments
+hit a cache instead of recomputing.
+
+OCR Card Parsing
+================
+The bot reads the blackjack embed via ``extract_hand_info_from_screen()``,
+which OCRs the centre portion of the screen and parses:
+  - Player's hand (e.g. "You: A 7 (18)")
+  - Dealer's upcard (e.g. "Dealer: 5")
+  - Hand-over keywords (win/lose/push/bust/blackjack)
+  - Player's total (from parenthesised number)
+
+Buttons are located by colour (blurple = action buttons) and then labelled
+by OCR to distinguish Hit / Stand / Double / Split / Surrender / Play Again.
+
+Error Guard
+===========
+The ``compute_decision()`` call is wrapped in try/except. If the Bewersdorff
+engine raises an exception (e.g. the ``TypeError: can't multiply sequence
+by non-int of type 'float'`` bug), the error is logged with a full snapshot
+of the input state (total, soft flag, dealer upcard, pair card, shoe tuple)
+and 'H' (hit) is used as the safe default action.
+"""
+
 import time
 import random
 import re
@@ -8,50 +76,85 @@ from bot.vision import VisionEngine
 
 logger = logging.getLogger("DankBot.Blackjack")
 
+# ── Card Value Mappings ────────────────────────────────────────────────
+# Face cards → 10, Ace → 11 (soft/hard handling is done in EV engine).
 FACE_MAP = {'j': 10, 'q': 10, 'k': 10, 'a': 11,
             'jack': 10, 'queen': 10, 'king': 10, 'ace': 11}
 
+# All possible card values (2-11) and their count per standard 52-card deck.
+# 10 includes 10/J/Q/K (4 each = 16), 11 is Aces (4).
 CARD_VALUES = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 PER_DECK = {2: 4, 3: 4, 4: 4, 5: 4, 6: 4, 7: 4, 8: 4, 9: 4, 10: 16, 11: 4}
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  SHOE — Running card-count tracker
+# ═══════════════════════════════════════════════════════════════════════
+
 class Shoe:
+    """Tracks the composition of cards remaining in the shoe.
+
+    Maintains a dict of ``{card_value: remaining_count}`` for each
+    denomination 2..11. Cards seen during play are removed via ``remove()``,
+    making probability computations progressively more accurate.
+
+    Args:
+        num_decks: Number of decks in the shoe (default 5).
+    """
+
     def __init__(self, num_decks=5):
         self.num_decks = num_decks
         self.reset()
 
     def reset(self, num_decks=None):
+        """Reset the shoe to a full set of ``num_decks``."""
         if num_decks is not None:
             self.num_decks = num_decks
         self.counts = {v: PER_DECK[v] * self.num_decks for v in CARD_VALUES}
 
     def remove(self, card_value):
+        """Decrement the count for a single card value. No-op if depleted."""
         c = self.counts.get(card_value)
         if c and c > 0:
             self.counts[card_value] = c - 1
 
     def total(self):
+        """Total number of cards remaining in the shoe."""
         return sum(self.counts.values())
 
     def copy(self):
+        """Return a deep-ish copy (new Shoe, same num_decks, copied dict)."""
         s = Shoe(self.num_decks)
         s.counts = dict(self.counts)
         return s
 
     def as_tuple(self):
+        """Return counts as a tuple ordered by CARD_VALUES for cache key."""
         return tuple(self.counts[v] for v in CARD_VALUES)
 
 
+# Global shoe instance. Accessed via get_shoe() / reset_shoe().
 _shoe = Shoe()
 
 def reset_shoe(num_decks=5):
+    """Convenience: reset the global shoe to a full set of decks."""
     _shoe.reset(num_decks)
 
 def get_shoe():
+    """Convenience: return the global shoe instance."""
     return _shoe
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  OCR PARSING FUNCTIONS
+# ═══════════════════════════════════════════════════════════════════════
+
 def card_value(text: str) -> int:
+    """Convert OCR'd card string to numeric value (2-11).
+
+    Handles face cards ('J'/'Q'/'K' → 10), Ace ('A' → 11),
+    and numeric values. Returns 0 if unparseable.
+    """
     text = text.strip().lower()
     if text in FACE_MAP:
         return FACE_MAP[text]
@@ -61,6 +164,13 @@ def card_value(text: str) -> int:
         return 0
 
 def parse_player_cards(ocr_text: str):
+    """Parse player's starting cards from OCR text.
+
+    Expects pattern like: ``you: A 7 (18)`` or ``your: 10 J (20)``.
+    Extracts at least the first two cards (starting hand).
+
+    Returns list of int card values, or None if unparseable.
+    """
     text = ocr_text.lower()
     m = re.search(r'(?:you|your)\s*:\s*([\d\sajqk]+?)\s*(?:\(|$)', text)
     if m:
@@ -71,6 +181,12 @@ def parse_player_cards(ocr_text: str):
     return None
 
 def parse_dealer_upcard(ocr_text: str):
+    """Parse dealer's upcard from OCR text.
+
+    Expects pattern: ``dealer: 5`` or ``their: A``.
+
+    Returns int card value, or None.
+    """
     text = ocr_text.lower()
     m = re.search(r'(?:dealer|their)\s*:\s*(\w+)', text)
     if m:
@@ -78,6 +194,11 @@ def parse_dealer_upcard(ocr_text: str):
     return None
 
 def parse_dealer_final_cards(ocr_text: str):
+    """Parse dealer's full final hand from OCR text (for shoe tracking).
+
+    Same pattern as parse_player_cards but for the dealer line.
+    Returns list of int values, or None.
+    """
     text = ocr_text.lower()
     m = re.search(r'(?:dealer|their)\s*:\s*([\d\sajqk]+?)\s*(?:\(|$)', text)
     if m:
@@ -90,8 +211,31 @@ def parse_dealer_final_cards(ocr_text: str):
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  BEWERSDORFF EXPECTED-VALUE ENGINE
+# ═══════════════════════════════════════════════════════════════════════
+#
+# These functions compute exact EV for every possible action given the
+# current shoe composition. All are memoized via @lru_cache.
+#
+# CACHE KEYS:
+#   shoe_tuple — the output of Shoe.as_tuple(), a 10-element tuple.
+
 @lru_cache(maxsize=8192)
 def dealer_outcomes(up_value, shoe_tuple):
+    """Recursively compute the probability distribution of the dealer's
+    final hand value (or bust) given their upcard and the current shoe.
+
+    The dealer follows standard rules:
+      - Hits on 16 or below.
+      - Stands on 17 or above (hits on soft 17).
+      - Busts on 22+.
+
+    Returns a dict like ``{17: 0.25, 18: 0.15, ..., 'bust': 0.35}``
+    where values are probabilities summing to 1.0.
+
+    This is the core of the Bewersdorff algorithm.
+    """
     shoe = dict(zip(CARD_VALUES, shoe_tuple))
     total = sum(shoe.values())
     if total == 0:
@@ -131,6 +275,10 @@ def dealer_outcomes(up_value, shoe_tuple):
 
 
 def stand_ev(player_val, d_probs):
+    """Expected value of standing with ``player_val`` given dealer outcomes.
+
+    Win → +1.0, Lose → -1.0, Push → 0.0.
+    """
     ev = 0.0
     for outcome, prob in d_probs.items():
         if outcome == 'bust':
@@ -143,6 +291,10 @@ def stand_ev(player_val, d_probs):
 
 
 def draw_ev(player_val, is_soft, dealer_up, shoe_tuple, depth):
+    """Expected value of hitting (drawing one card then playing optimally).
+
+    Recursively calls ``optimal_ev`` for the post-draw state.
+    """
     shoe = dict(zip(CARD_VALUES, shoe_tuple))
     total = sum(shoe.values())
     if total == 0:
@@ -168,6 +320,11 @@ def draw_ev(player_val, is_soft, dealer_up, shoe_tuple, depth):
 
 
 def double_ev(player_val, is_soft, dealer_up, shoe_tuple):
+    """Expected value of doubling down (2x bet, exactly one card, then stand).
+
+    The EV is double that of standing with the resulting hand, minus the
+    additional half-bet loss if busting.
+    """
     shoe = dict(zip(CARD_VALUES, shoe_tuple))
     total = sum(shoe.values())
     if total == 0:
@@ -194,6 +351,27 @@ def double_ev(player_val, is_soft, dealer_up, shoe_tuple):
 
 @lru_cache(maxsize=16384)
 def optimal_ev(player_val, is_soft, dealer_up, shoe_tuple, can_double=True, can_surrender=True, depth=0):
+    """Return the maximum expected value among all legal actions and the
+    action that achieves it.
+
+    Actions considered:
+      - Stand (S)
+      - Surrender (U) — only at depth 0, only if EV < -0.5
+      - Hit (H)
+      - Double (D) — only if ``can_double`` is True
+
+    Args:
+        player_val: Current hand total.
+        is_soft: Whether the hand contains a soft Ace.
+        dealer_up: Dealer's upcard value.
+        shoe_tuple: Shoe composition as a tuple (for caching).
+        can_double: Whether doubling is still legal (after a hit, no).
+        can_surrender: Whether surrendering is still legal (first decision only).
+        depth: Recursion depth (capped at 10 to prevent infinite loops).
+
+    Returns:
+        (best_ev, best_action) where best_action is one of 'S', 'H', 'D', 'U'.
+    """
     if depth > 10:
         ev = stand_ev(player_val, dealer_outcomes(dealer_up, shoe_tuple))
         return (ev, 'S')
@@ -223,6 +401,24 @@ def optimal_ev(player_val, is_soft, dealer_up, shoe_tuple, can_double=True, can_
 
 
 def compute_decision(player_val, is_soft, dealer_up, shoe_tuple, is_pair=False, pair_card_val=None):
+    """Compute the optimal blackjack action given the game state.
+
+    If the player has a pair (same card value in the first two cards),
+    evaluates splitting (playing two hands at 2x original EV) vs. the
+    best alternative action, and returns 'P' if splitting has higher EV.
+
+    Args:
+        player_val: Current hand total.
+        is_soft: Whether the hand contains a playable Ace (11).
+        dealer_up: Dealer's upcard value.
+        shoe_tuple: Shoe composition tuple.
+        is_pair: True if the first two cards have equal value.
+        pair_card_val: The value of each card in the pair (for split EV).
+
+    Returns:
+        Action character: 'S' (stand), 'H' (hit), 'D' (double),
+        'P' (split), or 'U' (surrender).
+    """
     if player_val >= 21:
         return 'S'
 
@@ -239,7 +435,21 @@ def compute_decision(player_val, is_soft, dealer_up, shoe_tuple, is_pair=False, 
     return action
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  HAND EXECUTION
+# ═══════════════════════════════════════════════════════════════════════
+
 def extract_hand_info(ocr_text: str):
+    """Parse structured hand information from OCR'd embed text.
+
+    Returns a dict with keys:
+      - player_total (int or None)
+      - dealer_up (int or None)
+      - is_blackjack (bool)
+      - is_bust (bool)
+      - hand_over (bool)  — True if win/lose/push/bust keywords appear
+      - player_cards (list of int or None)
+    """
     text = ocr_text.lower()
     info = {
         'player_total': None,
@@ -276,6 +486,11 @@ def extract_hand_info(ocr_text: str):
 
 
 def extract_hand_info_from_screen(screen_bgr):
+    """OCR the screen and return parsed hand information.
+
+    OCRs the centre band (15%-85% of screen height) where the blackjack
+    embed typically appears.
+    """
     h, w = screen_bgr.shape[:2]
     text = VisionEngine.ocr_region(screen_bgr, (0, int(h * 0.15), w, int(h * 0.7)))
     if not text:
@@ -284,6 +499,14 @@ def extract_hand_info_from_screen(screen_bgr):
 
 
 def find_bj_buttons(screen_bgr):
+    """Locate all blackjack UI buttons by colour + OCR.
+
+    Searches blurple, grey, and green button regions, then OCRs each
+    to identify its label.
+
+    Returns a dict mapping button names ('hit', 'stand', 'double',
+    'split', 'surrender', 'play_again') to their button dicts.
+    """
     buttons = {}
     blurple = VisionEngine.find_buttons_by_color(screen_bgr, 'blurple')
     grey = VisionEngine.find_buttons_by_color(screen_bgr, 'grey')
@@ -309,6 +532,30 @@ def find_bj_buttons(screen_bgr):
 
 
 def execute_blackjack_hand(screen_bgr, config, log_func) -> dict:
+    """Play one complete blackjack hand from start to finish.
+
+    Flow:
+      1. Verify embed ownership.
+      2. OCR the initial hand (player cards, dealer upcard).
+      3. Track seen cards in the global shoe.
+      4. Loop up to 10 times:
+         a. Find action buttons.
+         b. If hand is over (win/lose/push/bust/BJ), log dealer's final
+            cards for shoe tracking, click "Play Again" if available, return.
+         c. If player is bust, return.
+         d. Compute optimal decision via ``compute_decision()``.
+         e. Execute the action (hit / stand / double / split / surrender).
+         f. Track newly drawn cards in the shoe.
+      5. Return result dict with 'completed', 'won', 'lost', etc.
+
+    Args:
+        screen_bgr: Current screen capture (BGR numpy array).
+        config: Config dict-like object (for username, skip_embed_check).
+        log_func: Callable for logging (accepts string).
+
+    Returns:
+        Dict with keys: completed, won, lost, pushed, blackjack, payout, error.
+    """
     result = {
         'completed': False,
         'won': False,
